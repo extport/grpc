@@ -2,7 +2,7 @@
     "name": "extport/grpc",
     "description": "Unofficial PIE-compatible mirror of grpc/grpc",
     "type": "php-ext",
-    "version": "0.0.0",
+    "version": "1.80.0",
     "require": {
         "php": ">=8.2"
     },
