@@ -36,7 +36,7 @@
             "nts",
             "ts"
         ],
-        "build-path": "."
+        "build-path": ".",
         "configure-flags": "--enable-grpc",
         "apk-packages": "zlib-dev"
     },
