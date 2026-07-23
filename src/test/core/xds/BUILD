@@ -302,6 +302,37 @@ grpc_cc_test(
     ],
 )
 
+grpc_cc_test(
+    name = "xds_transport_grpc_test",
+    srcs = ["xds_transport_grpc_test.cc"],
+    external_deps = [
+        "gtest",
+        "absl/status",
+        "absl/synchronization",
+    ],
+    tags = ["xds_test"],
+    uses_event_engine = True,
+    uses_polling = True,
+    deps = [
+        "//:config",
+        "//:exec_ctx",
+        "//:gpr",
+        "//:grpc",
+        "//:grpc_base",
+        "//:ref_counted_ptr",
+        "//:xds_client",
+        "//src/core:default_event_engine",
+        "//src/core:down_cast",
+        "//src/core:json_reader",
+        "//src/core:validation_errors",
+        "//src/core:xds_certificate_provider_store",
+        "//src/core:xds_server_grpc",
+        "//src/core:xds_server_grpc_interface",
+        "//src/core:xds_transport_grpc",
+        "//test/core/test_util:grpc_test_util",
+    ],
+)
+
 grpc_internal_proto_library(
     name = "xds_client_fuzzer_proto",
     srcs = [
@@ -392,6 +423,7 @@ grpc_cc_test(
         "gtest",
         "absl/status",
         "absl/status:statusor",
+        "absl/strings",
         "absl/strings:str_format",
         "re2",
         "@com_google_protobuf//upb/mem",
@@ -402,6 +434,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:config",
+        "//:envoy_config_core_upb",
         "//:envoy_extensions_transport_sockets_tls_upb",
         "//:envoy_type_upb",
         "//:gpr",
@@ -414,10 +447,13 @@ grpc_cc_test(
         "//src/core:grpc_matchers",
         "//src/core:grpc_xds_client",
         "//src/core:json_writer",
+        "//src/core:metadata_batch",
+        "//src/core:slice",
         "//src/core:time",
         "//src/core:upb_utils",
         "//src/core:validation_errors",
         "//src/core:xds_common_types",
+        "//src/core:xds_server_grpc",
         "//test/core/test_util:grpc_test_util",
         "//test/core/test_util:scoped_env_var",
         "//test/cpp/util:grpc_cli_utils",
