@@ -38,6 +38,7 @@ var testCipherSuites = []testCipherSuite{
 	{"ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256},
 	{"ECDHE_RSA_WITH_AES_128_GCM_SHA256", TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
 	{"ECDHE_RSA_WITH_AES_128_CBC_SHA", TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
+	{"ECDHE_ECDSA_WITH_AES_128_CBC_SHA256", TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256},
 	{"ECDHE_RSA_WITH_AES_128_CBC_SHA256", TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256},
 	{"ECDHE_RSA_WITH_AES_256_GCM_SHA384", TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384},
 	{"ECDHE_RSA_WITH_AES_256_CBC_SHA", TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA},
@@ -388,6 +389,18 @@ func addCipherSuiteTests() {
 		},
 		shouldFail:    true,
 		expectedError: ":WRONG_CERTIFICATE_TYPE:",
+	})
+
+	// id-RSASSA-PSS keys should not match RSA decryption cipher suites.
+	testCases = append(testCases, testCase{
+		name: "CertificateCipherMismatch-PSS",
+		config: Config{
+			MaxVersion:   VersionTLS12,
+			CipherSuites: []uint16{TLS_RSA_WITH_AES_128_GCM_SHA256},
+			Credential:   &pssCertificate,
+		},
+		shouldFail:    true,
+		expectedError: ":UNSUPPORTED_ALGORITHM:",
 	})
 
 	// Test that servers decline to select a cipher suite which is

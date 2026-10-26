@@ -9,7 +9,7 @@ default	rel
 %define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
-%include "boringssl_prefix_symbols_nasm.inc"
+%include "boringssl_prefix_symbols_internal_x86_64_win_asm.inc"
 %endif
 section	.text code align=64
 
@@ -440,7 +440,9 @@ $L$SEH_end_gcm_ghash_ssse3_7:
 
 
 section	.rdata rdata align=8
+
 ALIGN	16
+ghash_ssse3_constants:
 
 
 $L$reverse_bytes:

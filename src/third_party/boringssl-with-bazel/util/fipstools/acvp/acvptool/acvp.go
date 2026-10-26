@@ -51,7 +51,7 @@ var (
 	runFlag         = flag.String("run", "", "Name of primitive to run tests for")
 	fetchFlag       = flag.String("fetch", "", "Name of primitive to fetch vectors for")
 	expectedOutFlag = flag.String("expected-out", "", "Name of a file to write the expected results to")
-	wrapperPath     = flag.String("wrapper", "../../../../build/util/fipstools/acvp/modulewrapper/modulewrapper", "Path to the wrapper binary")
+	wrapperPath     = flag.String("wrapper", "../../../../build/modulewrapper", "Path to the wrapper binary")
 )
 
 type Config struct {
@@ -394,7 +394,7 @@ func connect(config *Config, sessionTokensCacheDir string) (*acvp.Server, error)
 	if len(config.PrivateKeyDERFile) == 0 && len(config.PrivateKeyFile) == 0 {
 		return nil, errors.New("config file missing PrivateKeyDERFile and PrivateKeyFile")
 	}
-	if len(config.PrivateKeyDERFile) != 0 && len(config.PrivateKeyFile) != 0 {
+	if config.PrivateKeyDERFile != "" && config.PrivateKeyFile != "" {
 		return nil, errors.New("config file has both PrivateKeyDERFile and PrivateKeyFile - can only have one")
 	}
 	privateKeyFile := config.PrivateKeyDERFile

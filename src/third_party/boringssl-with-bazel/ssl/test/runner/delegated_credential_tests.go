@@ -100,7 +100,8 @@ func createDelegatedCredential(parent *Credential, config delegatedCredentialCon
 	addUint24LengthPrefixedBytes(dc, pubBytes)
 
 	var dummyConfig Config
-	parentSignature, err := signMessage(false /* server */, VersionTLS13, parent.PrivateKey, &dummyConfig, config.algo, delegatedCredentialSignedMessage(dc.BytesOrPanic(), config.algo, parent.Leaf.Raw))
+	msg := delegatedCredentialSignedMessage(dc.BytesOrPanic(), config.algo, parent.Certificate[0])
+	parentSignature, err := signMessage(false /* server */, version{VersionTLS13}, parent.PrivateKey, &dummyConfig, config.algo, msg)
 	if err != nil {
 		panic(err)
 	}
@@ -117,15 +118,6 @@ func createDelegatedCredential(parent *Credential, config delegatedCredentialCon
 }
 
 func addDelegatedCredentialTests() {
-	p256DC := createDelegatedCredential(&rsaCertificate, delegatedCredentialConfig{
-		dcAlgo: signatureECDSAWithP256AndSHA256,
-		algo:   signatureRSAPSSWithSHA256,
-	})
-	p256DCFromECDSA := createDelegatedCredential(&ecdsaP256Certificate, delegatedCredentialConfig{
-		dcAlgo: signatureECDSAWithP256AndSHA256,
-		algo:   signatureECDSAWithP256AndSHA256,
-	})
-
 	testCases = append(testCases, testCase{
 		testType: serverTest,
 		name:     "DelegatedCredentials-NoClientSupport",
@@ -213,8 +205,22 @@ func addDelegatedCredentialTests() {
 		},
 	})
 
-	// Delegated credentials are not supported at TLS 1.2, even if the client
-	// sends the extension.
+	// Delegated credentials are not supported below TLS 1.3, even if the
+	// client sends the extension.
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "DelegatedCredentials-TLS11-Forbidden",
+		config: Config{
+			MinVersion:                    VersionTLS11,
+			MaxVersion:                    VersionTLS11,
+			DelegatedCredentialAlgorithms: []signatureAlgorithm{signatureECDSAWithP256AndSHA256},
+		},
+		shimCredentials: []*Credential{p256DC, &rsaCertificate},
+		flags:           []string{"-expect-selected-credential", "1"},
+		expectations: connectionExpectations{
+			peerCertificate: &rsaCertificate,
+		},
+	})
 	testCases = append(testCases, testCase{
 		testType: serverTest,
 		name:     "DelegatedCredentials-TLS12-Forbidden",
@@ -297,4 +303,24 @@ func addDelegatedCredentialTests() {
 		},
 	})
 
+	// Delegated credentials participate in trust anchor IDs.
+	id1 := []byte{1, 1}
+	id2 := []byte{2, 2, 2}
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "DelegatedCredentials-TrustAnchorIDs",
+		config: Config{
+			RequestTrustAnchors:           [][]byte{id2},
+			DelegatedCredentialAlgorithms: []signatureAlgorithm{signatureECDSAWithP256AndSHA256},
+			Bugs: ProtocolBugs{
+				ExpectPeerAvailableTrustAnchors: [][]byte{id1, id2},
+			},
+		},
+		shimCredentials: []*Credential{
+			p256DC.WithTrustAnchorID(id1), p256DCFromECDSA.WithTrustAnchorID(id2)},
+		flags: []string{"-expect-selected-credential", "1"},
+		expectations: connectionExpectations{
+			peerCertificate: p256DCFromECDSA,
+		},
+	})
 }

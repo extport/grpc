@@ -15,25 +15,14 @@
 package runner
 
 import (
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"fmt"
-	"math/big"
-	"time"
 )
 
 func addExtensionTests() {
-	exampleCertificate := generateSingleCertChain(&x509.Certificate{
-		SerialNumber: big.NewInt(57005),
-		Subject: pkix.Name{
-			CommonName: "test cert",
-		},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		DNSNames:              []string{"example.com"},
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-	}, &ecdsaP256Key)
+	exampleCertificate := rootCA.Issue(X509Info{
+		PrivateKey: &ecdsaP256Key,
+		DNSNames:   []string{"example.com"},
+	}).ToCredential()
 
 	// Repeat extensions tests at all versions.
 	for _, protocol := range []protocol{tls, dtls, quic} {
@@ -147,6 +136,26 @@ func addExtensionTests() {
 				},
 				flags:         []string{"-expect-server-name", "example.com"},
 				resumeSession: true,
+				expectations: connectionExpectations{
+					serverNameAck: ptrTo(true),
+				},
+			})
+			testCases = append(testCases, testCase{
+				protocol: protocol,
+				testType: serverTest,
+				name:     "ServerNameExtensionServer-NoACK-" + suffix,
+				config: Config{
+					MaxVersion: ver.version,
+					ServerName: "example.com",
+				},
+				flags: []string{
+					"-expect-server-name", "example.com",
+					"-no-server-name-ack",
+				},
+				resumeSession: true,
+				expectations: connectionExpectations{
+					serverNameAck: ptrTo(false),
+				},
 			})
 
 			// Test ALPN.
@@ -1194,7 +1203,7 @@ func addExtensionTests() {
 						testCases = append(testCases, testCase{
 							protocol:           protocol,
 							testType:           serverTest,
-							name:               fmt.Sprintf("ALPS-EarlyData-Server-ClientNoOffe-%s-%s", alpsCodePoint, suffix),
+							name:               fmt.Sprintf("ALPS-EarlyData-Server-ClientNoOffer-%s-%s", alpsCodePoint, suffix),
 							skipQUICALPNConfig: true,
 							config: Config{
 								MaxVersion:          ver.version,
@@ -1772,7 +1781,7 @@ func addExtensionTests() {
 			differentSCTList = append(differentSCTList, testSCTList...)
 			differentSCTList[len(differentSCTList)-1] ^= 1
 
-			// The SCT extension did not specify that it must only be sent on the inital handshake as it
+			// The SCT extension did not specify that it must only be sent on the initial handshake as it
 			// should have, so test that we tolerate but ignore it. This is only an issue pre-1.3, since
 			// SCTs are sent in the CertificateEntry message in 1.3, whereas they were previously sent
 			// in an extension in the ServerHello pre-1.3.
@@ -1854,6 +1863,56 @@ func addExtensionTests() {
 				},
 				shimCertificate: rsaCertificate.WithOCSP(testOCSPResponse).WithSCTList(testSCTList),
 			})
+
+			// The client should reject empty OCSP responses from the server. A server
+			// with no OCSP response should not send the status_request extension.
+			testCases = append(testCases, testCase{
+				protocol: protocol,
+				testType: clientTest,
+				name:     "RejectEmptyOCSPResponse-" + suffix,
+				config: Config{
+					MaxVersion: ver.version,
+					Credential: rsaCertificate.WithOCSP([]byte{}),
+				},
+				flags:              []string{"-enable-ocsp-stapling"},
+				shouldFail:         true,
+				expectedError:      ":DECODE_ERROR:",
+				expectedLocalError: "remote error: error decoding message",
+			})
+
+			// The certificate authorities extension cannot be empty. The sender should
+			// have omitted if empty.
+			if ver.version >= VersionTLS13 {
+				testCases = append(testCases, testCase{
+					protocol: protocol,
+					testType: clientTest,
+					name:     "RejectEmptyCertificateAuthorities-Client-" + suffix,
+					config: Config{
+						MaxVersion: ver.version,
+						ClientAuth: RequireAnyClientCert,
+						Bugs: ProtocolBugs{
+							SendEmptyCertificateAuthorities: true,
+						},
+					},
+					shouldFail:         true,
+					expectedError:      ":ERROR_PARSING_EXTENSION:",
+					expectedLocalError: "remote error: error decoding message",
+				})
+				testCases = append(testCases, testCase{
+					protocol: protocol,
+					testType: serverTest,
+					name:     "RejectEmptyCertificateAuthorities-Server-" + suffix,
+					config: Config{
+						MaxVersion: ver.version,
+						Bugs: ProtocolBugs{
+							SendEmptyCertificateAuthorities: true,
+						},
+					},
+					shouldFail:         true,
+					expectedError:      ":ERROR_PARSING_EXTENSION:",
+					expectedLocalError: "remote error: error decoding message",
+				})
+			}
 
 			// Extension permutation should interact correctly with other extensions,
 			// HelloVerifyRequest, HelloRetryRequest, and ECH. SSLTest.PermuteExtensions
@@ -2344,5 +2403,153 @@ func addOmitExtensionsTests() {
 				},
 			},
 		})
+	}
+}
+
+// Test that our extension parsers consistently reject trailing data.
+// TODO(crbug.com/505803427): Test other extensions.
+func addExtensionTrailingDataTests() {
+	for _, protocol := range []protocol{tls, dtls, quic} {
+		for _, ver := range allVersions(protocol) {
+			suffix := fmt.Sprintf("%s-%s", protocol.String(), ver.name)
+
+			testCases = append(testCases, testCase{
+				protocol: protocol,
+				testType: clientTest,
+				name:     "ExtensionTrailingData-ServerName-Client-" + suffix,
+				config: Config{
+					MaxVersion: ver.version,
+					Bugs: ProtocolBugs{
+						SendServerNameAck:          true,
+						ExtensionsWithTrailingData: []uint16{extensionServerName},
+					},
+				},
+				flags:              []string{"-host-name", "example.com"},
+				shouldFail:         true,
+				expectedError:      ":ERROR_PARSING_EXTENSION:",
+				expectedLocalError: "remote error: error decoding message",
+			})
+			testCases = append(testCases, testCase{
+				protocol: protocol,
+				testType: serverTest,
+				name:     "ExtensionTrailingData-ServerName-Server-" + suffix,
+				config: Config{
+					MaxVersion: ver.version,
+					ServerName: "example.com",
+					Bugs: ProtocolBugs{
+						ExtensionsWithTrailingData: []uint16{extensionServerName},
+					},
+				},
+				shouldFail:         true,
+				expectedError:      ":ERROR_PARSING_EXTENSION:",
+				expectedLocalError: "remote error: error decoding message",
+			})
+
+			ocspError := ":ERROR_PARSING_EXTENSION:"
+			if ver.version >= VersionTLS13 {
+				ocspError = ":DECODE_ERROR:"
+			}
+			testCases = append(testCases, testCase{
+				protocol: protocol,
+				testType: clientTest,
+				name:     "ExtensionTrailingData-StatusRequest-Client-" + suffix,
+				config: Config{
+					MaxVersion: ver.version,
+					Credential: rsaCertificate.WithOCSP(testOCSPResponse),
+					Bugs: ProtocolBugs{
+						ExtensionsWithTrailingData: []uint16{extensionStatusRequest},
+					},
+				},
+				flags:              []string{"-enable-ocsp-stapling"},
+				shouldFail:         true,
+				expectedError:      ocspError,
+				expectedLocalError: "remote error: error decoding message",
+			})
+			// Skip the server test. BoringSSL does not currently parse most of the
+			// ClientHello status_request extension.
+
+			if ver.version >= VersionTLS13 {
+				testCases = append(testCases, testCase{
+					protocol: protocol,
+					testType: clientTest,
+					name:     "ExtensionTrailingData-CertificateAuthorities-Client-" + suffix,
+					config: Config{
+						MaxVersion: ver.version,
+						ClientAuth: RequireAnyClientCert,
+						ClientCAs:  makeCertPoolFromRoots(&rsaChainCertificate, &ecdsaP384Certificate),
+						Bugs: ProtocolBugs{
+							ExtensionsWithTrailingData: []uint16{extensionCertificateAuthorities},
+						},
+					},
+					shouldFail:         true,
+					expectedError:      ":ERROR_PARSING_EXTENSION:",
+					expectedLocalError: "remote error: error decoding message",
+				})
+				testCases = append(testCases, testCase{
+					protocol: protocol,
+					testType: serverTest,
+					name:     "ExtensionTrailingData-CertificateAuthorities-Server-" + suffix,
+					config: Config{
+						MaxVersion:  ver.version,
+						RootCAs:     makeCertPoolFromRoots(&rsaChainCertificate, &ecdsaP384Certificate),
+						SendRootCAs: true,
+						Bugs: ProtocolBugs{
+							ExtensionsWithTrailingData: []uint16{extensionCertificateAuthorities},
+						},
+					},
+					shouldFail:         true,
+					expectedError:      ":ERROR_PARSING_EXTENSION:",
+					expectedLocalError: "remote error: error decoding message",
+				})
+
+				testCases = append(testCases, testCase{
+					protocol: protocol,
+					testType: clientTest,
+					name:     "ExtensionTrailingData-TrustAnchors-EncryptedExtensions-Client-" + suffix,
+					config: Config{
+						MaxVersion:            ver.version,
+						AvailableTrustAnchors: [][]byte{{1}},
+						Bugs: ProtocolBugs{
+							ExtensionsWithTrailingData: []uint16{extensionTrustAnchors},
+						},
+					},
+					flags:              []string{"-requested-trust-anchors", trustAnchorListFlagValue([]byte{2})},
+					shouldFail:         true,
+					expectedError:      ":ERROR_PARSING_EXTENSION:",
+					expectedLocalError: "remote error: error decoding message",
+				})
+				testCases = append(testCases, testCase{
+					protocol: protocol,
+					testType: clientTest,
+					name:     "ExtensionTrailingData-TrustAnchors-Certificate-Client-" + suffix,
+					config: Config{
+						MaxVersion: ver.version,
+						Bugs: ProtocolBugs{
+							AlwaysMatchTrustAnchorID:   true,
+							ExtensionsWithTrailingData: []uint16{extensionTrustAnchors},
+						},
+					},
+					flags:              []string{"-requested-trust-anchors", trustAnchorListFlagValue([]byte{2})},
+					shouldFail:         true,
+					expectedError:      ":ERROR_PARSING_EXTENSION:",
+					expectedLocalError: "remote error: error decoding message",
+				})
+				testCases = append(testCases, testCase{
+					protocol: protocol,
+					testType: serverTest,
+					name:     "ExtensionTrailingData-TrustAnchors-ClientHello-Server-" + suffix,
+					config: Config{
+						MaxVersion:          ver.version,
+						RequestTrustAnchors: [][]byte{{1}},
+						Bugs: ProtocolBugs{
+							ExtensionsWithTrailingData: []uint16{extensionTrustAnchors},
+						},
+					},
+					shouldFail:         true,
+					expectedError:      ":ERROR_PARSING_EXTENSION:",
+					expectedLocalError: "remote error: error decoding message",
+				})
+			}
+		}
 	}
 }

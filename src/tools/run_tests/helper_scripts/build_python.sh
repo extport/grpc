@@ -167,7 +167,7 @@ pip_install_dir_and_deps() {
 # pip/wheel/setuptools upgrades above are pre-warmed with network retries into
 # PIP_CACHE_DIR by prepare_build_macos_rc. gevent is pre-built into
 # PIP_FIND_LINKS, because it lacks upstream macOS wheels for Python 3.10.
-pip_install --upgrade gevent 'cython==3.1.1' 'protobuf>=7.35.1,<8.0.0'
+pip_install --upgrade gevent 'cython==3.2.8' 'protobuf>=7.35.1,<8.0.0'
 
 pip_install_dir "$ROOT"
 

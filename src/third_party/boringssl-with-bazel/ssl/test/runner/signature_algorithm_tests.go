@@ -33,10 +33,6 @@ var testSignatureAlgorithms = []struct {
 	{"RSA_PKCS1_SHA384", signatureRSAPKCS1WithSHA384, &rsaCertificate, 0},
 	{"RSA_PKCS1_SHA512", signatureRSAPKCS1WithSHA512, &rsaCertificate, 0},
 	{"ECDSA_SHA1", signatureECDSAWithSHA1, &ecdsaP256Certificate, CurveP256},
-	// The “P256” in the following line is not a mistake. In TLS 1.2 the
-	// hash function doesn't have to match the curve and so the same
-	// signature algorithm works with P-224.
-	{"ECDSA_P224_SHA256", signatureECDSAWithP256AndSHA256, &ecdsaP224Certificate, CurveP224},
 	{"ECDSA_P256_SHA256", signatureECDSAWithP256AndSHA256, &ecdsaP256Certificate, CurveP256},
 	{"ECDSA_P384_SHA384", signatureECDSAWithP384AndSHA384, &ecdsaP384Certificate, CurveP384},
 	{"ECDSA_P521_SHA512", signatureECDSAWithP521AndSHA512, &ecdsaP521Certificate, CurveP521},
@@ -44,6 +40,9 @@ var testSignatureAlgorithms = []struct {
 	{"RSA_PSS_SHA384", signatureRSAPSSWithSHA384, &rsaCertificate, 0},
 	{"RSA_PSS_SHA512", signatureRSAPSSWithSHA512, &rsaCertificate, 0},
 	{"Ed25519", signatureEd25519, &ed25519Certificate, 0},
+	{"ML-DSA-44", signatureMLDSA44, &mldsa44Certificate, 0},
+	{"ML-DSA-65", signatureMLDSA65, &mldsa65Certificate, 0},
+	{"ML-DSA-87", signatureMLDSA87, &mldsa87Certificate, 0},
 	// Tests for key types prior to TLS 1.2.
 	{"RSA", 0, &rsaCertificate, 0},
 	{"ECDSA", 0, &ecdsaP256Certificate, CurveP256},
@@ -99,15 +98,21 @@ func addSignatureAlgorithmTests() {
 				var shouldFail bool
 				isTLS12PKCS1 := hasComponent(alg.name, "PKCS1") && !hasComponent(alg.name, "LEGACY")
 				isTLS13PKCS1 := hasComponent(alg.name, "PKCS1") && hasComponent(alg.name, "LEGACY")
+				isMLDSA := alg.id == signatureMLDSA44 || alg.id == signatureMLDSA65 || alg.id == signatureMLDSA87
 
 				// TLS 1.3 removes a number of signature algorithms.
-				if ver.version >= VersionTLS13 && (alg.curve == CurveP224 || alg.id == signatureECDSAWithSHA1 || isTLS12PKCS1) {
+				if ver.version >= VersionTLS13 && (alg.id == signatureECDSAWithSHA1 || isTLS12PKCS1) {
 					shouldFail = true
 				}
 
 				// The backported RSA-PKCS1 code points only exist for TLS 1.3
 				// client certificates.
 				if (ver.version < VersionTLS13 || signTestType == serverTest) && isTLS13PKCS1 {
+					shouldFail = true
+				}
+
+				// ML-DSA is only supported for TLS 1.3
+				if ver.version < VersionTLS13 && isMLDSA {
 					shouldFail = true
 				}
 
@@ -119,7 +124,7 @@ func addSignatureAlgorithmTests() {
 
 				// By default, BoringSSL does not accept these algorithms.
 				verifyDefault := !shouldFail
-				if alg.id == signatureECDSAWithSHA1 || alg.id == signatureECDSAWithP521AndSHA512 || alg.id == signatureEd25519 || isTLS13PKCS1 {
+				if alg.id == signatureECDSAWithSHA1 || alg.id == signatureECDSAWithP521AndSHA512 || alg.id == signatureEd25519 || isTLS13PKCS1 || isMLDSA {
 					verifyDefault = false
 				}
 
@@ -144,6 +149,12 @@ func addSignatureAlgorithmTests() {
 					if ver.version <= VersionTLS12 && signTestType == serverTest {
 						return ":NO_SHARED_CIPHER:"
 					}
+					if ver.version <= VersionTLS12 && isMLDSA {
+						// In TLS 1.2, there's no valid way for the server to request an
+						// ML-DSA client certificate (there's no ClientCertificateType for
+						// ML-DSA).
+						return ":UNKNOWN_CERTIFICATE_TYPE:"
+					}
 					return ":NO_COMMON_SIGNATURE_ALGORITHMS:"
 				}
 				signLocalError := func(shouldFail bool) string {
@@ -157,6 +168,12 @@ func addSignatureAlgorithmTests() {
 				verifyError := func(shouldFail bool) string {
 					if !shouldFail {
 						return ""
+					}
+					if ver.version <= VersionTLS12 && verifyTestType == clientTest && isMLDSA {
+						// TLS 1.2 has no support for ML-DSA signatures. The client code
+						// rejects a server's attempt to sign with ML-DSA when it sees the
+						// certificate.
+						return ":WRONG_CERTIFICATE_TYPE:"
 					}
 					// If the shim rejects the signature algorithm, but the
 					// runner forcibly selects it anyway, the shim should notice.
@@ -1132,6 +1149,39 @@ func addSignatureAlgorithmTests() {
 			cipher: TLS_RSA_WITH_AES_128_GCM_SHA256,
 		},
 	})
+
+	// id-RSASSA-PSS certificates are not accepted for use with rsa_pss_rsae_*
+	// algorithms. There are separate codepoints, which we do not support, for
+	// id-RSASSA-PSS.
+	for _, ver := range tlsVersions {
+		testCases = append(testCases, testCase{
+			testType: clientTest,
+			name:     "RejectPSSKeyType-Client-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+				Credential: pssCertificate.WithSignatureAlgorithms(
+					signatureRSAPSSWithSHA256,
+				),
+			},
+			shouldFail:    true,
+			expectedError: ":UNSUPPORTED_ALGORITHM:",
+		})
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "RejectPSSKeyType-Server-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+				Credential: pssCertificate.WithSignatureAlgorithms(
+					signatureRSAPSSWithSHA256,
+				),
+			},
+			flags:         []string{"-require-any-client-certificate"},
+			shouldFail:    true,
+			expectedError: ":UNSUPPORTED_ALGORITHM:",
+		})
+	}
 }
 
 func addBadECDSASignatureTests() {

@@ -31,12 +31,13 @@
 #include "../test/test_util.h"
 
 
+BSSL_NAMESPACE_BEGIN
 namespace {
 
 template <typename T>
 std::vector<uint8_t> Marshal(int (*marshal_func)(CBB *, const T *),
                              const T *t) {
-  bssl::ScopedCBB cbb;
+  ScopedCBB cbb;
   uint8_t *encoded;
   size_t encoded_len;
   if (!CBB_init(cbb.get(), 1) ||      //
@@ -54,66 +55,58 @@ std::vector<uint8_t> Marshal(int (*marshal_func)(CBB *, const T *),
 // take care of casting the key types from the public keys to the BCM types.
 // That saves casting noise in the template functions.
 
-int wrapper_768_marshal_private_key(
-    CBB *out, const struct MLKEM768_private_key *private_key) {
-  return bcm_success(BCM_mlkem768_marshal_private_key(
-      out, reinterpret_cast<const BCM_mlkem768_private_key *>(private_key)));
+int wrapper_768_marshal_private_key(CBB *out,
+                                    const MLKEM768_private_key *private_key) {
+  return bcm_success(BCM_mlkem768_marshal_private_key(out, private_key));
 }
 
-int wrapper_1024_marshal_private_key(
-    CBB *out, const struct MLKEM1024_private_key *private_key) {
-  return bcm_success(BCM_mlkem1024_marshal_private_key(
-      out, reinterpret_cast<const BCM_mlkem1024_private_key *>(private_key)));
+int wrapper_1024_marshal_private_key(CBB *out,
+                                     const MLKEM1024_private_key *private_key) {
+  return bcm_success(BCM_mlkem1024_marshal_private_key(out, private_key));
 }
 
 void wrapper_768_generate_key_external_seed(
     uint8_t out_encoded_public_key[MLKEM768_PUBLIC_KEY_BYTES],
     struct MLKEM768_private_key *out_private_key,
     const uint8_t seed[MLKEM_SEED_BYTES]) {
-  BCM_mlkem768_generate_key_external_seed(
-      out_encoded_public_key,
-      reinterpret_cast<BCM_mlkem768_private_key *>(out_private_key), seed);
+  BCM_mlkem768_generate_key_external_seed(out_encoded_public_key,
+                                          out_private_key, seed);
 }
 
 void wrapper_1024_generate_key_external_seed(
     uint8_t out_encoded_public_key[MLKEM1024_PUBLIC_KEY_BYTES],
     struct MLKEM1024_private_key *out_private_key,
     const uint8_t seed[MLKEM_SEED_BYTES]) {
-  BCM_mlkem1024_generate_key_external_seed(
-      out_encoded_public_key,
-      reinterpret_cast<BCM_mlkem1024_private_key *>(out_private_key), seed);
+  BCM_mlkem1024_generate_key_external_seed(out_encoded_public_key,
+                                           out_private_key, seed);
 }
 
 void wrapper_768_encap_external_entropy(
     uint8_t out_ciphertext[MLKEM768_CIPHERTEXT_BYTES],
     uint8_t out_shared_secret[MLKEM_SHARED_SECRET_BYTES],
-    const struct MLKEM768_public_key *public_key,
+    const MLKEM768_public_key *public_key,
     const uint8_t entropy[BCM_MLKEM_ENCAP_ENTROPY]) {
-  BCM_mlkem768_encap_external_entropy(
-      out_ciphertext, out_shared_secret,
-      reinterpret_cast<const BCM_mlkem768_public_key *>(public_key), entropy);
+  BCM_mlkem768_encap_external_entropy(out_ciphertext, out_shared_secret,
+                                      public_key, entropy);
 }
 
 void wrapper_1024_encap_external_entropy(
     uint8_t out_ciphertext[MLKEM1024_CIPHERTEXT_BYTES],
     uint8_t out_shared_secret[MLKEM_SHARED_SECRET_BYTES],
-    const struct MLKEM1024_public_key *public_key,
+    const MLKEM1024_public_key *public_key,
     const uint8_t entropy[BCM_MLKEM_ENCAP_ENTROPY]) {
-  BCM_mlkem1024_encap_external_entropy(
-      out_ciphertext, out_shared_secret,
-      reinterpret_cast<const BCM_mlkem1024_public_key *>(public_key), entropy);
+  BCM_mlkem1024_encap_external_entropy(out_ciphertext, out_shared_secret,
+                                       public_key, entropy);
 }
 
 int wrapper_768_parse_private_key(struct MLKEM768_private_key *out_private_key,
                                   CBS *in) {
-  return bcm_success(BCM_mlkem768_parse_private_key(
-      reinterpret_cast<BCM_mlkem768_private_key *>(out_private_key), in));
+  return bcm_success(BCM_mlkem768_parse_private_key(out_private_key, in));
 }
 
 int wrapper_1024_parse_private_key(
     struct MLKEM1024_private_key *out_private_key, CBS *in) {
-  return bcm_success(BCM_mlkem1024_parse_private_key(
-      reinterpret_cast<BCM_mlkem1024_private_key *>(out_private_key), in));
+  return bcm_success(BCM_mlkem1024_parse_private_key(out_private_key, in));
 }
 
 template <typename PUBLIC_KEY, size_t PUBLIC_KEY_BYTES, typename PRIVATE_KEY,
@@ -172,18 +165,32 @@ void BasicTest() {
       Marshal(MARSHAL_PRIVATE, priv.get()));
   EXPECT_EQ(encoded_private_key.size(), size_t{PRIVATE_KEY_BYTES});
 
-  OPENSSL_memcpy(first_two_bytes, encoded_private_key.data(),
-                 sizeof(first_two_bytes));
-  OPENSSL_memset(encoded_private_key.data(), 0xff, sizeof(first_two_bytes));
+  // Parsing should fail if a coefficient is out of range.
+  {
+    std::vector<uint8_t> invalid = encoded_private_key;
+    invalid[0] = 0xff;
+    invalid[1] = 0xff;
+    CBS cbs;
+    CBS_init(&cbs, invalid.data(), invalid.size());
+    auto priv2 = std::make_unique<PRIVATE_KEY>();
+    ASSERT_FALSE(PARSE_PRIVATE(priv2.get(), &cbs));
+  }
+
+  // Parsing should fail if the public key hash is wrong.
+  {
+    std::vector<uint8_t> invalid = encoded_private_key;
+    // The final 64 bytes of the semi-expanded format are the 32-byte hash and
+    // the 32-byte FO (Fujisaki-Okamoto) failure secret. Flip a bit in the hash.
+    invalid[invalid.size() - 33] ^= 1;
+    CBS cbs;
+    CBS_init(&cbs, invalid.data(), invalid.size());
+    auto priv2 = std::make_unique<PRIVATE_KEY>();
+    ASSERT_FALSE(PARSE_PRIVATE(priv2.get(), &cbs));
+  }
+
   CBS cbs;
   CBS_init(&cbs, encoded_private_key.data(), encoded_private_key.size());
   auto priv2 = std::make_unique<PRIVATE_KEY>();
-  // Parsing should fail because the first coefficient is >= kPrime.
-  ASSERT_FALSE(PARSE_PRIVATE(priv2.get(), &cbs));
-
-  OPENSSL_memcpy(encoded_private_key.data(), first_two_bytes,
-                 sizeof(first_two_bytes));
-  CBS_init(&cbs, encoded_private_key.data(), encoded_private_key.size());
   ASSERT_TRUE(PARSE_PRIVATE(priv2.get(), &cbs));
   EXPECT_EQ(Bytes(Declassified(encoded_private_key)),
             Bytes(Declassified(Marshal(MARSHAL_PRIVATE, priv2.get()))));
@@ -436,6 +443,15 @@ TEST(MLKEMTest, NistDecap1024TestVectors) {
                              wrapper_1024_parse_private_key, MLKEM1024_decap>);
 }
 
+// Unoptimized builds are much slower, and iterative tests run ML-KEM many
+// times. Disable them in unoptimized builds for now.
+// https://crbug.com/479850443
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__OPTIMIZE__)
+#define DISABLE_IF_NOT_OPTIMIZED(t) DISABLED_ ## t
+#else
+#define DISABLE_IF_NOT_OPTIMIZED(t) t
+#endif
+
 template <
     typename PUBLIC_KEY, size_t PUBLIC_KEY_BYTES, typename PRIVATE_KEY,
     size_t PRIVATE_KEY_BYTES,
@@ -487,7 +503,7 @@ void IteratedTest(uint8_t out[32]) {
   BORINGSSL_keccak_squeeze(&results_st, out, 32);
 }
 
-TEST(MLKEMTest, Iterate768) {
+TEST(MLKEMTest, DISABLE_IF_NOT_OPTIMIZED(Iterate768)) {
   // The structure of this test is taken from
   // https://github.com/C2SP/CCTV/blob/main/ML-KEM/README.md?ref=words.filippo.io#accumulated-pq-crystals-vectors
   // but the final value has been updated to reflect the change from Kyber to
@@ -508,7 +524,7 @@ TEST(MLKEMTest, Iterate768) {
 }
 
 
-TEST(MLKEMTest, Iterate1024) {
+TEST(MLKEMTest, DISABLE_IF_NOT_OPTIMIZED(Iterate1024)) {
   // The structure of this test is taken from
   // https://github.com/C2SP/CCTV/blob/main/ML-KEM/README.md?ref=words.filippo.io#accumulated-pq-crystals-vectors
   // but the final value has been updated to reflect the change from Kyber to
@@ -531,14 +547,14 @@ TEST(MLKEMTest, Iterate1024) {
 TEST(MLKEMTest, Self) { ASSERT_TRUE(boringssl_self_test_mlkem()); }
 
 TEST(MLKEMTest, PWCT) {
-  auto pub768 = std::make_unique<uint8_t[]>(BCM_MLKEM768_PUBLIC_KEY_BYTES);
-  auto priv768 = std::make_unique<BCM_mlkem768_private_key>();
+  auto pub768 = std::make_unique<uint8_t[]>(MLKEM768_PUBLIC_KEY_BYTES);
+  auto priv768 = std::make_unique<MLKEM768_private_key>();
   ASSERT_EQ(
       BCM_mlkem768_generate_key_fips(pub768.get(), nullptr, priv768.get()),
       bcm_status::approved);
 
-  auto pub1024 = std::make_unique<uint8_t[]>(BCM_MLKEM1024_PUBLIC_KEY_BYTES);
-  auto priv1024 = std::make_unique<BCM_mlkem1024_private_key>();
+  auto pub1024 = std::make_unique<uint8_t[]>(MLKEM1024_PUBLIC_KEY_BYTES);
+  auto priv1024 = std::make_unique<MLKEM1024_private_key>();
   ASSERT_EQ(
       BCM_mlkem1024_generate_key_fips(pub1024.get(), nullptr, priv1024.get()),
       bcm_status::approved);
@@ -553,3 +569,4 @@ TEST(MLKEMTest, NullptrArgumentsToCreate) {
 }
 
 }  // namespace
+BSSL_NAMESPACE_END

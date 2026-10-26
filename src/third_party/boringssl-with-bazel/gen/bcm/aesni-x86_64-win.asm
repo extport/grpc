@@ -9,7 +9,7 @@ default	rel
 %define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
-%include "boringssl_prefix_symbols_nasm.inc"
+%include "boringssl_prefix_symbols_internal_x86_64_win_asm.inc"
 %endif
 section	.text code align=64
 
@@ -2472,7 +2472,9 @@ $L$enc_key_ret_alt:
 $L$SEH_end_aes_hw_set_encrypt_key_alt_4:
 
 section	.rdata rdata align=8
+
 ALIGN	64
+aesni_constants:
 $L$bswap_mask:
 	DB	15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
 $L$increment32:

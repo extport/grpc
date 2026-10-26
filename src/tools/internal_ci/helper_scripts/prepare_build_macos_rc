@@ -290,7 +290,7 @@ then
       --upgrade pip
   time retry_with_backoff "${PY310_PREWARM_VENV}/bin/python" -m pip wheel \
       --wheel-dir "${PIP_FIND_LINKS}" \
-      wheel 'setuptools==77.0.1' 'cython==3.1.1' 'protobuf>=7.35.1,<8.0.0'
+      wheel 'setuptools==77.0.1' 'cython==3.2.8' 'protobuf>=7.35.1,<8.0.0'
 
   # NOTE: For Python 3.10, gevent has to be built from source because upstream
   # does not publish 3.10 macOS wheels. This triggers PEP 517 build isolation,

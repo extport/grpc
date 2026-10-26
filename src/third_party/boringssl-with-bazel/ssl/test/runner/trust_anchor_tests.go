@@ -28,6 +28,7 @@ func addTrustAnchorTests() {
 	id1 := []byte{1}
 	id2 := []byte{2, 2}
 	id3 := []byte{3, 3, 3}
+	id4 := []byte{4, 4, 4, 4}
 
 	// Unsolicited trust_anchors extensions should be rejected.
 	testCases = append(testCases, testCase{
@@ -204,6 +205,83 @@ func addTrustAnchorTests() {
 			&rsaCertificate,
 		},
 		flags: []string{"-expect-selected-credential", "2"},
+	})
+
+	// When the server sends available trust anchors, it should filter the list
+	// by whether the credential would be usable with the connection at all.
+	p256DC := createDelegatedCredential(&rsaCertificate, delegatedCredentialConfig{
+		dcAlgo: signatureECDSAWithP256AndSHA256,
+		algo:   signatureRSAPSSWithSHA256,
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "TrustAnchors-Server-FilterAvailable",
+		config: Config{
+			MinVersion:                VersionTLS13,
+			RequestTrustAnchors:       [][]byte{id1},
+			VerifySignatureAlgorithms: []signatureAlgorithm{signatureRSAPSSWithSHA256, signatureECDSAWithP256AndSHA256},
+			Bugs: ProtocolBugs{
+				ExpectPeerAvailableTrustAnchors: [][]byte{id2},
+				ExpectPeerMatchTrustAnchor:      ptrTo(false),
+			},
+		},
+		shimCredentials: []*Credential{
+			rsaCertificate.WithTrustAnchorID(id2),
+			// Ineligible because of signature algorithms.
+			rsaCertificate.WithTrustAnchorID(id3).WithSignatureAlgorithms(signatureRSAPSSWithSHA384),
+			// Ineligible because of credential type.
+			p256DC.WithTrustAnchorID(id4),
+			&rsaCertificate,
+		},
+		flags: []string{"-expect-selected-credential", "3"},
+	})
+
+	// After filtering, the list of available trust anchors may even be empty.
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "TrustAnchors-Server-FilterAvailable-Empty",
+		config: Config{
+			MinVersion:                VersionTLS13,
+			RequestTrustAnchors:       [][]byte{id1},
+			VerifySignatureAlgorithms: []signatureAlgorithm{signatureRSAPSSWithSHA256, signatureECDSAWithP256AndSHA256},
+			Bugs: ProtocolBugs{
+				ExpectPeerAvailableTrustAnchors: [][]byte{},
+				ExpectPeerMatchTrustAnchor:      ptrTo(false),
+			},
+		},
+		shimCredentials: []*Credential{
+			// Ineligible because of signature algorithms.
+			rsaCertificate.WithTrustAnchorID(id2).WithSignatureAlgorithms(signatureRSAPSSWithSHA384),
+			// Ineligible because of credential type.
+			p256DC.WithTrustAnchorID(id4),
+			&rsaCertificate,
+		},
+		flags: []string{"-expect-selected-credential", "2"},
+	})
+
+	// The caller can override the default available list.
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "TrustAnchors-Server-OverrideAvailable",
+		config: Config{
+			RequestTrustAnchors: [][]byte{id1},
+			Bugs: ProtocolBugs{
+				ExpectPeerAvailableTrustAnchors: [][]byte{id1, id2, id3},
+			},
+		},
+		shimCredentials: []*Credential{&rsaCertificate},
+		flags:           []string{"-available-trust-anchors", trustAnchorListFlagValue(id1, id2, id3)},
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "TrustAnchors-Server-OverrideAvailable-NotRequested",
+		config: Config{
+			Bugs: ProtocolBugs{
+				ExpectPeerAvailableTrustAnchors: [][]byte{},
+			},
+		},
+		shimCredentials: []*Credential{&rsaCertificate},
+		flags:           []string{"-available-trust-anchors", trustAnchorListFlagValue(id1, id2, id3)},
 	})
 
 	// The ClientHello list may be empty. The client must be able to send it and

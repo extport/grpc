@@ -26,6 +26,9 @@
 #include "../test/test_util.h"
 
 
+BSSL_NAMESPACE_BEGIN
+namespace {
+
 static void TestSIMD(unsigned excess, const std::vector<uint8_t> &key,
                      const std::vector<uint8_t> &in,
                      const std::vector<uint8_t> &mac) {
@@ -44,14 +47,14 @@ static void TestSIMD(unsigned excess, const std::vector<uint8_t> &key,
   done += todo;
 
   for (;;) {
-    // Feed 128 + |excess| bytes to test SIMD mode.
+    // Feed 128 + `excess` bytes to test SIMD mode.
     if (done + 128 + excess > in.size()) {
       break;
     }
     CRYPTO_poly1305_update(&state, in.data() + done, 128 + excess);
     done += 128 + excess;
 
-    // Feed |excess| bytes to ensure SIMD mode can handle short inputs.
+    // Feed `excess` bytes to ensure SIMD mode can handle short inputs.
     if (done + excess > in.size()) {
       break;
     }
@@ -92,7 +95,7 @@ TEST(Poly1305Test, TestVectors) {
     CRYPTO_poly1305_finish(&state, out);
     EXPECT_EQ(Bytes(out), Bytes(mac)) << "Streaming Poly1305 failed.";
 
-    // Test |CRYPTO_poly1305_init| and |CRYPTO_poly1305_finish| work on
+    // Test `CRYPTO_poly1305_init` and `CRYPTO_poly1305_finish` work on
     // unaligned values.
     alignas(8) uint8_t unaligned_key[32 + 1];
     OPENSSL_memcpy(unaligned_key + 1, key.data(), 32);
@@ -111,3 +114,6 @@ TEST(Poly1305Test, TestVectors) {
     TestSIMD(48, key, in, mac);
   });
 }
+
+}  // namespace
+BSSL_NAMESPACE_END
